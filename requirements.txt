@@ -3,7 +3,7 @@ yfinance
 pandas
 numpy
 matplotlib
-import math
+math
 scipy
 mpl_toolkits.mplot3d
 seaborn
