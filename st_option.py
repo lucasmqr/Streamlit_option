@@ -114,6 +114,10 @@ def volume_depuis_ouverture(ticker):
     volume_total = data['Volume'].sum()
     return int(volume_total)
 
+# Fonction qui retourne la market cap de l'entreprise
+def get_market_cap(ticker):
+    stock = yf.Ticker(ticker)
+    return stock.info.get("marketCap", "Non disponible")
 """
 Partie 2 : Option 
 """
