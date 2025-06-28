@@ -50,15 +50,27 @@ from scipy.optimize import root_scalar
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import streamlit as st
-
+import time 
+from datetime import datetime
 # ----------- Données de base -----------
+
+
+def convert_to_paris_string(ts):
+
+    # Convertir vers heure de Paris
+    ts_paris = ts.tz_convert('Europe/Paris')
+
+    # Formater en jj/mm/aaaa : hh:mm
+    return ts_paris.strftime("%d/%m/%Y : %H:%M")
+
 def get_last_price(ticker):
     try:
         stock = yf.Ticker(ticker)
         data = stock.history(period="1d")
         if data.empty:
             raise ValueError(f"Aucune donnée pour {ticker}")
-        return data['Close'].iloc[-1]
+        print(data)
+        return data['Close'].iloc[-1],convert_to_paris_string(data.index[-1])
     except Exception as e:
         print(f"Erreur get_last_price: {e}")
         return None
@@ -71,6 +83,36 @@ def get_name(ticker):
         print(f"Erreur get_name: {e}")
         return "Erreur"
 
+def get_market_cap(ticker):
+    time.sleep(0.5)
+    stock=yf.Ticker(ticker)
+    market_cap=stock.info.get("marketCap")
+    return market_cap
+
+def get_sector(ticker):
+
+    stock=yf.Ticker(ticker)
+    sector = stock.info.get("sector")
+
+    return sector
+
+def get_website(ticker):
+    stock=yf.Ticker(ticker)
+    return (stock.info.get("website"))
+
+def get_description(ticker):
+    stock=yf.Ticker(ticker)
+    return(stock.info.get("longBusinessSummary"))
+
+def get_beta(ticker):
+    stock=yf.Ticker(ticker)
+    return(stock.info.get("beta"))
+
+def get_fwpe(ticker):
+    stock=yf.Ticker(ticker)
+    return(stock.info.get("forwardPE"))
+
+
 def variation_depuis_ouverture(ticker):
     try:
         data = yf.Ticker(ticker).history(period="1d")
@@ -78,6 +120,23 @@ def variation_depuis_ouverture(ticker):
         close_price = data['Close'].iloc[-1]
         return round((close_price - open_price) / open_price * 100, 2)
     except:
+        return None
+    
+def performance_ytd(ticker):
+    try:
+        today = datetime.now().date()
+        start_of_year = datetime(today.year, 1, 1).date()
+
+        data = yf.Ticker(ticker).history(start=start_of_year, end=today)
+        if data.empty or 'Close' not in data:
+            return None
+
+        start_price = data['Close'].iloc[0]
+        last_price = data['Close'].iloc[-1]
+
+        return round((last_price - start_price) / start_price * 100, 2)
+    except Exception as e:
+        print(f"Erreur : {e}")
         return None
 
 def volume_depuis_ouverture(ticker):
@@ -93,6 +152,24 @@ def volume_moyen(ticker, period="1mo"):
         return int(data['Volume'].mean())
     except:
         return None
+    
+def get_stock_price_history(ticker: str, period: str = "6mo") -> pd.DataFrame:
+    """
+    Récupère l'historique du prix de clôture d'une action sur une période donnée.
+    
+    :param ticker: Le ticker de l'action (ex: "AAPL")
+    :param period: La période (ex: "6mo", "1y", "ytd", "max")
+    :return: Un DataFrame contenant les prix de clôture avec l'index en datetime
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        data = stock.history(period=period)
+        if data.empty:
+            return pd.DataFrame()
+        return data[["Close"]]
+    except Exception as e:
+        print(f"Erreur lors de la récupération des données : {e}")
+        return pd.DataFrame()
 
 # ----------- Options -----------
 def get_options_dataframe(ticker):
@@ -110,11 +187,10 @@ def get_options_dataframe(ticker):
         return pd.DataFrame(), f"Erreur get_options_dataframe: {e}"
 
 # ----------- Black-Scholes -----------
-def black_scholes(ticker, K, T, r, sigma, option_type):
+def black_scholes(S,ticker, K, T, r, sigma, option_type):
     try:
         if sigma <= 0 or T <= 0:
             return None
-        S = get_last_price(ticker)
         if S is None:
             return None
 
@@ -131,9 +207,9 @@ def black_scholes(ticker, K, T, r, sigma, option_type):
         print(f"Erreur black_scholes: {e}")
         return None
 
-def get_implied_volatility(ticker, K, T, r, market_price, option_type):
+def get_implied_volatility(S, K, T, r, market_price, option_type):
     def objective(sigma):
-        price = black_scholes(ticker, K, T, r, sigma, option_type)
+        price = black_scholes(S, None, K, T, r, sigma, option_type)
         return (price - market_price) if price is not None else np.inf
 
     try:
@@ -142,6 +218,7 @@ def get_implied_volatility(ticker, K, T, r, market_price, option_type):
     except Exception as e:
         print(f"Erreur get_implied_volatility: {e}")
         return None
+
 
 # ----------- Visualisation -----------
 def plot_vol_surface(df, ticker, r, option_type="call"):
@@ -186,3 +263,123 @@ def plot_smile_and_skew(df, ticker, r, option_type="call"):
 
     except Exception as e:
         st.error(f"Erreur dans le tracé du smile/skew : {e}")
+
+
+
+
+
+
+def get_all_options(ticker: str) -> pd.DataFrame:
+    """
+    Récupère toutes les options (calls et puts) disponibles pour toutes les dates d'échéance.
+    
+    :param ticker: Le ticker de l'action (ex: "AAPL")
+    :return: Un DataFrame avec les données des options, contenant une colonne 'expiration' et 'optionType'
+    """
+    try:
+        stock = yf.Ticker(ticker)
+        expirations = stock.options
+
+        all_options = []
+        for date in expirations:
+            opt_chain = stock.option_chain(date)
+            
+            calls = opt_chain.calls.copy()
+            calls["optionType"] = "call"
+            calls["expiration"] = date
+
+            puts = opt_chain.puts.copy()
+            puts["optionType"] = "put"
+            puts["expiration"] = date
+
+            all_options.append(calls)
+            all_options.append(puts)
+
+        df_all = pd.concat(all_options, ignore_index=True)
+        return df_all
+
+    except Exception as e:
+        print(f"Erreur lors de la récupération des options pour {ticker} : {e}")
+        return pd.DataFrame()
+    
+def black_scholes_greeks(S, K, T, r, sigma, option_type):
+    if sigma <= 0 or T <= 0 or S <= 0:
+        return None
+
+    d1 = (np.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * np.sqrt(T))
+    d2 = d1 - sigma * np.sqrt(T)
+
+    greeks = {}
+
+    if option_type == "call":
+        greeks['Delta'] = norm.cdf(d1)
+        greeks['Theta'] = (-S * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) -
+                           r * K * np.exp(-r * T) * norm.cdf(d2)) / 365
+        greeks['Rho'] = K * T * np.exp(-r * T) * norm.cdf(d2) / 100
+    elif option_type == "put":
+        greeks['Delta'] = norm.cdf(d1) - 1
+        greeks['Theta'] = (-S * norm.pdf(d1) * sigma / (2 * np.sqrt(T)) +
+                           r * K * np.exp(-r * T) * norm.cdf(-d2)) / 365
+        greeks['Rho'] = -K * T * np.exp(-r * T) * norm.cdf(-d2) / 100
+    else:
+        return None
+
+    greeks['Vega'] = S * norm.pdf(d1) * np.sqrt(T) / 100  # en pourcentage
+
+    return greeks
+    
+
+
+# tickers_dict = {
+#     "USA": {
+#         "3M": "^IRX",
+#         "5Y": "^FVX",
+#         "10Y": "^TNX",
+#         "30Y": "^TYX"
+#     },
+#     "France": {
+#         "2Y": "FR2YT=RR",
+#         "5Y": "FR5YT=RR",
+#         "10Y": "FR10YT=RR",
+#         "30Y": "FR30YT=RR"
+#     },
+#     "Germany": {
+#         "2Y": "DE2YT=RR",
+#         "5Y": "DE5YT=RR",
+#         "10Y": "DE10YT=RR",
+#         "30Y": "DE30YT=RR"
+#     }
+# }
+
+
+# def get_yield_curve(tickers_dict, start_date, end_date):
+#     data = {}
+#     for country, tickers in tickers_dict.items():
+#         curves = {}
+#         for label, ticker in tickers.items():
+#             hist = yf.Ticker(ticker).history(start=start_date, end=end_date)
+#             if not hist.empty:
+#                 curves[label] = {
+#                     'Début année': hist['Close'].iloc[0],
+#                     'Dernier': hist['Close'].iloc[-1]
+#                 }
+#         df = pd.DataFrame(curves).T  # maturités en index, colonnes = Début année, Dernier
+#         df.index.name = "Maturité"
+#         data[country] = df
+#     return data
+
+
+# def plot_yield_curves(data):
+#     import matplotlib.pyplot as plt
+
+#     fig, ax = plt.subplots(figsize=(10, 6))
+#     for country, df in data.items():
+#         print(f"Colonnes pour {country}:", df.columns)  # <--- debug
+#         ax.plot(df.index, df['Début année'], '--', label=f"{country} - Début année")
+#         ax.plot(df.index, df['Dernier'], '-', label=f"{country} - Dernier")
+
+#     ax.set_xlabel("Maturité")
+#     ax.set_ylabel("Taux (%)")
+#     ax.set_title("Courbes de taux - Début d'année vs Dernier")
+#     ax.legend()
+#     st.pyplot(fig)
